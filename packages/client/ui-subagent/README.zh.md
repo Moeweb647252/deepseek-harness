@@ -25,9 +25,9 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-会话页头的普通面包屑使用会话标题。subagent 面包屑优先使用创建时的原始描述（`entry.label`），缺少时回退到 Session id。普通与 subagent 面包屑标题均使用 14px 文字和 20px 行高。当会话的直接目录有子项或读取失败时，后代数量触发器渲染在页头操作区中预设标签之后，不带任何面包屑分隔符。目录缺席或为空时隐藏数量触发器，除非根 Session 已开启且可用的 Team 任务板有共享任务或任务记录错误。仅开启 Team 模式不会显示空入口。触发器打开该直接目录，以总数作为无障碍名称、运行数作为无障碍描述，并且只在行展开时加载嵌套目录。选择任意深度，即可用该子会话的确切 `{parentSessionId, childSessionId, mode}` 地址打开其对话；也可以使用非当前本地行的行尾箭头在右侧 Sidebar 打开同一地址，并在空间允许时优先使用独立分栏。
+会话页头的普通面包屑使用会话标题。subagent 面包屑优先使用目录行的标签（`entry.label`），缺少时回退到 Session id。普通与 subagent 面包屑标题均使用 14px 文字和 20px 行高。当会话的直接目录有子项或读取失败时，后代数量触发器渲染在页头操作区中预设标签之后，不带任何面包屑分隔符。目录缺席或为空时隐藏数量触发器，除非根 Session 已开启且可用的 Team 任务板有共享任务或任务记录错误。仅开启 Team 模式不会显示空入口。触发器打开该直接目录，以总数作为无障碍名称、运行数作为无障碍描述，并且只在行展开时加载嵌套目录。选择任意深度，即可用该子会话的确切 `{parentSessionId, childSessionId, mode}` 地址打开其对话；也可以使用非当前本地行的行尾箭头在右侧 Sidebar 打开同一地址，并在空间允许时优先使用独立分栏。
 
-本包注册 `dsh-resource://subagentchat/session/<child>?parent=<parent>&mode=<mode>` 资源与 builtin Sidebar tab 类型。资源直接根据地址保留 child 的 `SessionReference`，不刷新 parent 目录，并在 tab 记录关闭时释放 reference。tab 通过 `sidebar.chat.conversation` 渲染共享 `conversation.content` Factory，把局部 View 固定为 Chat，并省略主 Conversation 的 Header 与宽度控制。
+本包注册 `dsh-resource://subagentchat/session/<child>?parent=<parent>&mode=<mode>` 资源与 builtin Sidebar tab 类型。资源直接根据地址保留 child 的 `SessionReference`，不刷新 parent 目录，并在 tab 记录关闭时释放 reference。tab 通过 `sidebar.chat.conversation` 渲染共享 `conversation.content` Factory，把局部 View 固定为 Chat，并省略主 Conversation 的 Header 与宽度控制。tab 标题读取 parent 目录行的标签（可被重贴标签替换），在该行缺失时回退到 child 自身的 descriptor 标签，最后才回退到原始身份。
 
 每个打开的目录菜单宽度均为 360px，外层内边距为 6px，并受视口可用宽度约束。仅当 Team 模式已开启、存在至少一个未删除的共享任务且 footer 扩展可用时，根菜单才显示不可折叠的“子智能体”和“共享任务”标题。“子智能体”标题使用 Users 图标，仅统计直接条目，依次显示已完成、进行中、未运行和外部任务数量；省略零值，分隔符与输入区任务列表一致。外部任务不计入运行中或已完成数量。空的“子智能体”区域仅在同时展示共享任务时显示“暂无子智能体”。Team 模式关闭或没有共享任务时，菜单仅显示 subagent 列表，不显示区域标题、共享任务模块、空状态文案或分隔线；真实的任务记录错误仍以独立警告显示。共享任务上方保留 4px 外边距，不显示分隔线。两个区域标题均保留 7px 图标与文字间距，并在统计数量前额外留出 4px。仅菜单本身滚动，各区域不单独滚动。在兼容 WebKit 的浏览器中，原生 5px 滚动条位于右侧 6px 内边距内，轨道两端内缩，并保留稳定的滚动条空间，使内容在需要滚动时保持原有宽度。其他浏览器保留标准原生滚动条。
 
@@ -39,7 +39,15 @@ kind: "package-reference"
 
 数量、负责人及侧边栏操作的工具提示在悬停 500ms 后显示。悬停文字可见的触发器 150ms 后打开目录；指针离开触发器和目录后，经过 120ms 关闭。点击后代数量触发器会打开并固定目录，或关闭已固定的目录。纯图标数量触发器不会因悬停而打开，包括等待悬停打开期间切换到窄布局的情况。点击可切换固定菜单的开关状态；ArrowDown 会打开并固定菜单，并将焦点移至首行。点击外部或按 Escape 可关闭已固定的菜单。点击会将焦点移入面板，此时 ArrowDown/Home 进入首个树行，ArrowUp/End 进入最后一个树行；Escape 在焦点原本位于面板内时将其送回。点击面包屑标题会导航至对应会话。
 
-目录行在 Session id 上方显示创建描述，缺少创建描述时使用可用的 Session title。两者均缺少时，该行仅显示 Session id。本地行使用紧凑的 4px 垂直内边距；可点击内容使用 6px 水平内边距和 7px 间距，与共享任务行对齐，同时保留树的左侧偏移。当前对话在行尾显示装饰性对勾，该对勾不是操作控件；其他本地行保留侧边栏箭头。主标题使用 13px 文字，次级 id 使用 12px。所有行均将描述与 id 换行完整展示，包括在触屏上。running 使用共享 ongoing loading，最近一个已结束轮次正常完成的 inactive child 使用共享 success 绿点，其他 inactive child 使用共享 idle 灰点。每行都为状态图标预留相同的 14px 列宽，并将较小的圆点居中，使 title 与 loading 状态对齐。文字可见的页头触发器会垂直居中活动图标与数量，并保留 4px 水平间距。尾随列在上行显示提供方的持久化 token 用量总计，在下行显示活跃轮次耗时。键盘导航：ArrowRight/ArrowLeft 展开和折叠分支；ArrowUp/ArrowDown、Home、End 与 Escape 用于导航或关闭树。没有 label 的 one-shot 行回退到其会话 id。只有一行自身的目录加载为空后，它才是已知叶子。
+目录行在 Session id 上方显示创建描述，缺少创建描述时使用可用的 Session title。两者均缺少时，该行仅显示 Session id。本地行使用紧凑的 4px 垂直内边距；可点击内容使用 6px 水平内边距和 7px 间距，与共享任务行对齐，同时保留树的左侧偏移。当前对话在行尾显示装饰性对勾，该对勾不是操作控件；其他本地行保留侧边栏箭头。主标题使用 13px 文字，次级 id 使用 12px。所有行均将描述与 id 换行完整展示，包括在触屏上。running 使用共享 ongoing loading，最近一个已结束轮次正常完成的 inactive child 使用共享 success 绿点，其他 inactive child 使用共享 idle 灰点。每行都为状态图标预留相同的 14px 列宽，并将较小的圆点居中，使 title 与 loading 状态对齐。文字可见的页头触发器会垂直居中活动图标与数量，并保留 4px 水平间距。尾随列在上行显示提供方的持久化 token 用量总计，在下行显示活跃轮次耗时。键盘导航：ArrowRight/ArrowLeft 展开和折叠分支；ArrowUp/ArrowDown、Home、End 与 Escape 用于导航或关闭树。没有 label 的 one-shot 行回退到其会话 id。只有一行自身的目录加载为空后，它才是已知叶子。每一层都先列出正在运行的子级，并在运行组与空闲组内保持目录自身的顺序，因此已结束的子级会回到它的目录位置；持久目录本身保持原顺序，计数也不受影响。
+
+### 移除目录行
+
+除切换器当前显示的那一行之外，每个本地行都带有一个行尾移除按钮；外部执行行不显示该按钮，因为它们没有可退役的本地 Session。
+
+该按钮把该 child 从 parent 持久的 `subagent/catalog` projection 中退役。该行、页头计数与谱系不再列出它，而 child 的运行不会被中断，其 Session 日志与 Session 记录保持可读且不变；同一身份之后的新目录记录会再次列出它。
+
+当该行的 subagent 正在运行时按钮被禁用，并以本地化原生 title 说明运行中的子智能体无法移除：退役记录是持久的，移除在线工作会让它在继续运行的同时从发现中消失。该按钮自身调用进行中时同样禁用，并显示等待 title；该 title 使用原生属性，因为被禁用的按钮不会触发悬停。被拒绝的调用会在菜单主体中、目录树上方渲染本地化的 `role="alert"` 提示并保持菜单打开，该行及其按钮仍在原处，因此下一次尝试会替换该提示，而不需要单独的 retry 控件。被接受的调用会让该行随实时 projection 更新到达而消失，无需手动刷新。
 
 ### 续接对话
 
@@ -66,6 +74,8 @@ kind: "package-reference"
 每个页头入口在树下方声明 footer 插槽。可选 UI 通过该插槽加入同一滚动容器；目录负责打开和关闭。共享锚点定位会在内容、窗口大小或浏览器缩放变化时，将面板限制在可见视口内。
 
 打开目录下拉菜单不会请求其根目录。展开子节点目录或重试失败读取时调用 `refreshProjection`；共享投影值的变化会自动更新显示。
+
+移除绝不直接改写本地列表：该行的操作以持久的 parent 与 child id 调用 `ctx.remote.subagents.retire`，由到达的 projection 帧删除该行，因此被拒绝的调用不会改动目录，并通过菜单主体报告。
 
 面包屑地址从 Provider 所绑定的 Session 地址、已加载的 parent 目录或已列出的 subagent 谱系推导，也包括从未选中过的祖先。
 

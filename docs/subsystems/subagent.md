@@ -227,6 +227,10 @@ type SubagentInterruptAuthority =
 
 The parent-owned `subagentCatalog` projection lists all local children and parent-delivery external children. Caller-delivery external executions leave membership and result collection to their caller; local workflow children remain discoverable after completion. External entries carry `mode: 'external'` and cannot open a child Session or accept follow-ups. Catalog entries record membership at creation without execution status. `list_agents` exposes the root and reachable continuable descendants with `running` or `inactive` activity; see the [control tool](../../packages/subagent/tool-subagent-control/README.md#list_agents).
 
+A parent retires one listed identity from its catalog by appending the version-3 record through `retireCatalogChild()`; that record names only the identity it removes. The browser reaches the same operation as `subagents.retire`, whose request carries `parentSessionId` and `childSessionId`, resolves the parent's live Agent, and answers `{ retired: true }`. Retirement changes this listing alone: the child's run, Session log, and Session record stay readable, and a later establishing record for the same identity lists it again, so retiring an unlisted identity changes no view and repeated calls converge. An empty id rejects with `gateway/bad-request`, a parent with no live Agent with `subagent/parent-unavailable`, and an append failure with `gateway/internal`.
+
+`relabelCatalogChild(parent, childId, label)` appends the version-4 relabel record, which replaces one listed identity's display label in place: membership, mode, creation time, and catalog position stay unchanged, so the record retitles a row without adding or removing one, and a relabel for an unlisted identity changes no view. Catalog payloads therefore run through v0 local modes, v1 unknown children, v2 external executions, v3 retirement, and v4 relabel; each version is accepted by the released-format reader. A row's label is presentation only: `list_agents` reports it as the child's label, and the Sidebar chat tab titles itself from it, so a relabel reaches both surfaces without changing the child's identity or mode.
+
 ## Results and backend handles
 
 SubagentResult is available to program consumers. The activation registry retains the external backend handle until disposal completes. A cleanup failure does not replace a captured execution result: the activation result and parent notice retain it, while dispose rejects and the live subagent/end event reports error. Backend-owned diagnostics must satisfy the safe-detail requirements below.
@@ -375,7 +379,7 @@ interface SubagentProvider {
 
 The model-facing `list_agents` adapter reports current activity as `running` or `inactive`. These values do not describe task completion or guarantee that `send_message` will succeed.
 
-Direct-child entries are available as `observation.projections?.values.subagentCatalog` through `ctx.sessionQuery.observeSession(parentSessionId, { signal })`; callers release the observation with `using`. Entries follow parent event order without reading child logs or enumerating the Session corpus. Query failures propagate; a missing catalog projection means discovery is unavailable. Browser rows derive membership from the shared projection store and add activity from Session status; the control stream pushes complete catalog updates. `listDescendants()` recursively reads those catalogs and derives `hasChildren` from each child catalog. [The parent-catalog Agent Note](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.md) owns creation, fork isolation, ordering, and persistence costs.
+Direct-child entries are available as `observation.projections?.values.subagentCatalog` through `ctx.sessionQuery.observeSession(parentSessionId, { signal })`; callers release the observation with `using`. Entries follow parent event order without reading child logs or enumerating the Session corpus. Query failures propagate; a missing catalog projection means discovery is unavailable. Browser rows derive membership from the shared projection store and add activity from Session status; the control stream pushes complete catalog updates. `listDescendants()` recursively reads those catalogs and derives `hasChildren` from each child catalog. [The parent-catalog Agent Note](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.md) owns creation, fork isolation, ordering, and persistence costs; the [retirement format record](../persistence-changes/2026-10-19-subagent-catalog-retirement.md) owns the version-3 payload, the [relabel format record](../persistence-changes/2026-10-21-subagent-catalog-relabel.md) owns the version-4 payload, and the [catalog-removal Agent Note](../../.agents/notes/implemented/feature/2026-10-20-catalog-row-removal.md) owns the browser removal decision.
 
 `SubagentRuntime.listDescendants(rootSessionId)` recursively calls the same catalog reader in stable pre-order, preserving each parent's event order. External entries are leaves without local Sessions. One-shot and unknown-mode entries remain traversal nodes; unknown modes produce `unsupported` diagnostics. An unreadable child catalog produces `corrupt` or `unavailable` and stops only that branch. Root read failures, missing services or projections, and cancellation reject the listing. Each reachable catalog is observed once and released before the next read; repeated ids and cycles are skipped. Sessions absent from reachable catalogs are not discovered, including ordinary Session forks and any subagents below those forks. Each row carries its catalog parent and root-relative depth:
 
@@ -542,6 +546,23 @@ listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<Subagen
  *   otherwise `gateway/internal`.
  */
 @Remote({ name: 'interruptByUser', resources: { session: childSessionId => childSessionId } }) interruptByUser(childSessionId: SessionId): SubagentInterruptReceipt
+
+/**
+ * Remote face of catalog retirement under one durable parent address: remove
+ * one direct child from its parent's `subagentCatalog` listing without
+ * deleting or interrupting the child Session.
+ *
+ * The parent Session owns the catalog, so its Agent must be live to append
+ * the retirement record. The record names one identity and an unlisted
+ * identity changes no view, which keeps repeated and racing calls
+ * convergent.
+ * @param request - durable parent and child identities.
+ * @returns acknowledgement that the retirement record was appended.
+ * @throws {RemoteError} `gateway/bad-request` for an empty id,
+ *   `subagent/parent-unavailable` when no live Agent carries the parent,
+ *   otherwise `gateway/internal`.
+ */
+@Remote('retire') retire(request: SubagentRetireRequest): SubagentRetireReceipt
 
 /**
  * Register a provider under its name. Registration is effect-scoped and HMR

@@ -143,6 +143,7 @@ function props(
     openChildAside: vi.fn(),
     refreshProjection: vi.fn(),
     renderSlot: vi.fn(() => null),
+    retireChild: vi.fn(async () => {}),
     lineageSessionId: PARENT,
     displayTitle: 'Parent title',
     t,
@@ -158,6 +159,12 @@ function summary(id: SessionId, updatedAt: number): SessionSummary {
     blank: false,
     updatedAt,
   }
+}
+
+
+/** A `<button>` query that keeps the DOM element type, so `disabled` is readable without a cast. */
+function button(name: string): HTMLButtonElement {
+  return screen.getByRole('button', { name }) as HTMLButtonElement
 }
 
 function hoverCatalog(trigger: HTMLElement): void {
@@ -522,6 +529,27 @@ describe('SubagentHeaderLineage', () => {
       parentSessionId: PARENT,
       childSessionId: CHILD, mode: 'continuable',
     })
+  })
+
+  it('leads with running children while keeping catalog order inside each group', () => {
+    const idle = 'idle-worker' as SessionId
+    const busy = 'busy-worker' as SessionId
+    const rows = (busyActivity: 'running' | 'inactive') => props(catalog({
+      entries: [
+        { id: idle, mode: 'continuable', label: 'idle-worker', activity: 'inactive' },
+        { id: busy, mode: 'continuable', label: 'busy-worker', activity: busyActivity },
+      ],
+    }))
+    const view = render(<HeaderCatalog {...rows('running')} />)
+    hoverCatalog(screen.getByRole('button', { name: '2 个子智能体' }))
+    // The catalog lists `idle-worker` first, but that child is not running.
+    const labels = (): (string | null)[] => screen.getAllByRole('treeitem')
+      .map(row => row.getAttribute('aria-label'))
+    expect(labels().map(label => label?.includes('busy-worker'))).toEqual([true, false])
+
+    // A settled child returns to its catalog position instead of keeping a slot.
+    view.rerender(<HeaderCatalog {...rows('inactive')} />)
+    expect(labels().map(label => label?.includes('idle-worker'))).toEqual([true, false])
   })
 
   it('selects singular count keys for one direct child', () => {
@@ -1695,6 +1723,169 @@ describe('SubagentHeaderLineage', () => {
     expect(current.getAttribute('aria-current')).toBe('true')
     expect(within(current).getByText('indexer').className).toContain('currentLabel')
     expect(screen.queryByRole('treeitem', { name: /reviewer/ })).toBeNull()
+  })
+})
+
+describe('subagent catalog retirement', () => {
+  it('retires the row from its parent catalog without opening the child and keeps the menu open', () => {
+    const input = props(catalog({
+      entries: [
+        { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+        { id: 'child-2' as SessionId, mode: 'one-shot', label: 'reviewer', activity: 'inactive' },
+      ],
+    }))
+    render(<HeaderCatalog {...input} />)
+    // No child is running, so the trigger reports the total only.
+    hoverCatalog(screen.getByRole('button', { name: '2 个子智能体' }))
+    const row = screen.getByRole('treeitem', { name: /worker/ })
+
+    fireEvent.click(within(row).getByRole('button', { name: '从目录中移除 worker' }))
+
+    expect(input.retireChild).toHaveBeenCalledExactlyOnceWith(PARENT, CHILD)
+    expect(input.openChild).not.toHaveBeenCalled()
+    expect(input.openChildAside).not.toHaveBeenCalled()
+    expect(screen.getByRole('tree')).toBeTruthy()
+  })
+
+  it('disables the pending row button until its retirement settles', async () => {
+    let settle: (() => void) | undefined
+    const input = props(catalog({ entries: [
+      { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+    ] }))
+    input.retireChild.mockImplementationOnce(() => new Promise<void>((resolve) => { settle = resolve }))
+    render(<HeaderCatalog {...input} />)
+    hoverCatalog(screen.getByRole('button', { name: /1 个子智能体/ }))
+    const remove = button('从目录中移除 worker')
+    expect(remove.disabled).toBe(false)
+
+    fireEvent.click(remove)
+    expect(remove.disabled).toBe(true)
+
+    await act(async () => { settle?.() })
+    expect(button('从目录中移除 worker').disabled).toBe(false)
+  })
+
+  it('releases the pending mark when the catalog closes mid-flight', () => {
+    let settle: (() => void) | undefined
+    const input = props(catalog({ entries: [
+      { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+    ] }))
+    input.retireChild.mockImplementationOnce(() => new Promise<void>((resolve) => { settle = resolve }))
+    render(<HeaderCatalog {...input} />)
+    const trigger = screen.getByRole('button', { name: /1 个子智能体/ })
+
+    hoverCatalog(trigger)
+    fireEvent.click(screen.getByRole('button', { name: '从目录中移除 worker' }))
+    expect(button('从目录中移除 worker').disabled).toBe(true)
+
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'Escape' })
+    expect(screen.queryByRole('tree')).toBeNull()
+
+    hoverCatalog(trigger)
+    // A row re-established after the menu occurrence closed is actionable again.
+    expect(button('从目录中移除 worker').disabled).toBe(false)
+    act(() => { settle?.() })
+  })
+
+  it('reports a rejected retirement in the menu and replaces it on the next attempt', async () => {
+    const input = props(catalog({ entries: [
+      { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+    ] }))
+    input.retireChild.mockRejectedValueOnce(
+      new RemoteError('subagent/parent-unavailable', 'parent is gone', { parentSessionId: PARENT }),
+    )
+    render(<HeaderCatalog {...input} />)
+    hoverCatalog(screen.getByRole('button', { name: /1 个子智能体/ }))
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '从目录中移除 worker' }))
+    })
+
+    expect(screen.getByRole('alert').textContent).toBe('无法移除该子智能体，请重试')
+    // The failure keeps the catalog, its rows, and the retry path in place.
+    expect(screen.getByRole('tree')).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /worker/ })).toBeTruthy()
+    expect(button('从目录中移除 worker').disabled).toBe(false)
+
+    input.retireChild.mockImplementationOnce(() => new Promise<void>(() => {}))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '从目录中移除 worker' }))
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(input.retireChild).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a running row visible but refuses its retirement', () => {
+    const input = props(catalog())
+    render(<HeaderCatalog {...input} />)
+    hoverCatalog(screen.getByRole('button', { name: '2 个子智能体' }))
+    const runningRow = screen.getByRole('treeitem', { name: /worker/ })
+    const remove = within(runningRow).getByRole<HTMLButtonElement>('button', { name: 'worker 正在运行，无法移除' })
+
+    // A natively disabled control never delivers its click to the row either.
+    expect(remove.disabled).toBe(true)
+    expect(remove.getAttribute('title')).toBe('运行中的子智能体无法移除')
+    expect(input.retireChild).not.toHaveBeenCalled()
+
+    // The inactive sibling keeps an enabled control.
+    const inactiveRow = screen.getByRole('treeitem', { name: /reviewer/ })
+    const sibling = within(inactiveRow).getByRole<HTMLButtonElement>('button', { name: '从目录中移除 reviewer' })
+    expect(sibling.disabled).toBe(false)
+    fireEvent.click(sibling)
+    expect(input.retireChild).toHaveBeenCalledExactlyOnceWith(PARENT, 'child-2')
+  })
+
+  it('does not let the row control trigger the tree navigation keys', () => {
+    const input = props(catalog({
+      entries: [
+        { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+        { id: 'child-2' as SessionId, mode: 'one-shot', label: 'reviewer', activity: 'inactive' },
+      ],
+    }))
+    render(<HeaderCatalog {...input} />)
+    hoverCatalog(screen.getByRole('button', { name: '2 个子智能体' }))
+    const remove = screen.getByRole('button', { name: '从目录中移除 worker' })
+    remove.focus()
+
+    fireEvent.keyDown(remove, { key: 'End' })
+    fireEvent.keyDown(remove, { key: 'Home' })
+
+    expect(document.activeElement).toBe(remove)
+    expect(document.activeElement).not.toBe(screen.getByRole('treeitem', { name: /reviewer/ }))
+    expect(input.openChild).not.toHaveBeenCalled()
+  })
+
+  it('offers no retirement for external rows or the currently viewed row', () => {
+    const external = props(catalog({ entries: [
+      { id: CHILD, mode: 'external', label: 'External review', activity: 'inactive' },
+    ] }))
+    const externalView = render(<HeaderCatalog {...external} />)
+    hoverCatalog(screen.getByRole('button', { name: /子智能体/ }))
+    expect(screen.getByRole('treeitem', { name: /External review/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /从目录中移除/ })).toBeNull()
+    externalView.unmount()
+
+    const sibling = 'child-2' as SessionId
+    const switcher = {
+      ...props(catalog({ entries: [
+        { id: CHILD, mode: 'continuable', label: 'worker', activity: 'inactive' },
+        { id: sibling, mode: 'one-shot', label: 'reviewer', activity: 'inactive' },
+      ] }), {}, {
+        [CHILD]: { ...summary(CHILD, 1), parentId: PARENT, origin: 'subagent' as const },
+        [sibling]: { ...summary(sibling, 1), parentId: PARENT, origin: 'subagent' as const },
+      }),
+      sessionId: CHILD,
+      lineageSessionId: CHILD,
+      displayTitle: 'worker',
+    }
+    render(<HeaderCatalog {...switcher} />)
+    hoverCatalog(screen.getByRole('button', { name: '切换子智能体：worker' }))
+
+    const current = screen.getByRole('treeitem', { name: /worker/ })
+    expect(current.getAttribute('aria-current')).toBe('true')
+    expect(within(current).queryByRole('button', { name: /从目录中移除/ })).toBeNull()
+    expect(within(screen.getByRole('treeitem', { name: /reviewer/ }))
+      .getByRole('button', { name: '从目录中移除 reviewer' })).toBeTruthy()
   })
 })
 

@@ -6,3 +6,4 @@
     - treeitem "event-sourcing reviewer recorded-one-shot · one-shot · completed 0 tok · {{duration}}" [level=1]:
       - text: event-sourcing reviewer recorded-one-shot 0 tok ~6mo 12d
       - button "Open event-sourcing reviewer in sidebar"
+      - button "Remove event-sourcing reviewer from the catalog"

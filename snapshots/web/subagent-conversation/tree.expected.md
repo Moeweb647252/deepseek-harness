@@ -3,10 +3,13 @@
     - button "Collapse event-sourcing researcher descendants"
     - text: event-sourcing researcher {{uuid}} 7.9K tok {{duration}}
     - button "Open event-sourcing researcher in sidebar"
+    - button "Remove event-sourcing researcher from the catalog"
   - group:
     - treeitem "example editor recorded-grandchild · continuable · completed 0 tok · {{duration}}" [level=2]:
       - text: example editor recorded-grandchild 0 tok {{duration}}
       - button "Open example editor in sidebar"
+      - button "Remove example editor from the catalog"
   - treeitem "event-sourcing reviewer recorded-one-shot · one-shot · completed 0 tok · {{duration}}" [level=1]:
     - text: event-sourcing reviewer recorded-one-shot 0 tok ~6mo 12d
     - button "Open event-sourcing reviewer in sidebar"
+    - button "Remove event-sourcing reviewer from the catalog"

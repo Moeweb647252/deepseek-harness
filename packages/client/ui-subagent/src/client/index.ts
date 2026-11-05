@@ -2,6 +2,9 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+// Type-only: pulls the merged `ctx.remote.subagents` namespace through the
+// Client assembly boundary.
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { SubagentCatalogAction, SubagentHeaderLineage, type SubagentCatalogInjected, type SubagentCatalogActionInjected } from './SubagentHeaderLineage.tsx'
 import {
@@ -31,8 +34,10 @@ export type {
   SubagentReadOnlyComposerProps, SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
 
-/** Required services for subagent presentation and navigation. */
-export const inject = ['sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight']
+/** Required services for subagent presentation, navigation, and catalog retirement. */
+export const inject = [
+  'sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight', 'remote', 'remote.subagents',
+]
 
 /** Claim the composer when the child mode does not allow follow-ups. */
 function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatch | null {
@@ -64,6 +69,10 @@ export function apply(ctx: ClientContext): void {
     },
     refreshProjection(parentSessionId: SessionId) {
       void ctx.sessions.refreshProjections(parentSessionId)
+    },
+    async retireChild(parentSessionId: SessionId, childSessionId: SessionId) {
+      const result = await ctx.remote.subagents.retire({ parentSessionId, childSessionId })
+      if (!result.ok) throw result.error
     },
   })
   const footerAvailable = {

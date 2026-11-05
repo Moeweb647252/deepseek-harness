@@ -20,20 +20,45 @@ import type { SubagentCatalogEntry } from './projection-types.ts'
 /** Catalog payload version emitted by local child creation. */
 export const SUBAGENT_CATALOG_VERSION = 0
 
+/** Catalog payload version that retires one previously listed direct child. */
+export const RETIRED_SUBAGENT_CATALOG_VERSION = 3
+
+/** Catalog payload version that replaces the display label of one listed direct child. */
+export const RELABELED_SUBAGENT_CATALOG_VERSION = 4
+
 type KnownCatalogMode =
   | { readonly mode: 'one-shot'; readonly label?: string }
   | { readonly mode: 'continuable'; readonly label: string }
 
-/** Parent catalog v0 records local modes, v1 adds unknown children, and v2 records external executions. */
+/**
+ * Parent catalog v0 records local modes, v1 adds unknown children, v2 records
+ * external executions, v3 retires one listed identity without deleting the
+ * child Session, and v4 replaces one listed identity's display label. A
+ * retirement record carries only the identity it removes; a relabel record
+ * carries the identity and its replacement label, and never changes the
+ * child's position or mode.
+ */
 export type SubagentCatalogEvent =
-  & {
-    readonly childId: SessionId
-    readonly childCreatedAt: number
-  } & (
-    | ({ readonly version: 0 } & KnownCatalogMode)
-    | ({ readonly version: 1 } & (KnownCatalogMode | { readonly mode: 'unknown'; readonly label?: string }))
-    | { readonly version: 2; readonly mode: 'external'; readonly label?: string }
+  | (
+    & {
+      readonly childId: SessionId
+      readonly childCreatedAt: number
+    } & (
+      | ({ readonly version: 0 } & KnownCatalogMode)
+      | ({ readonly version: 1 } & (KnownCatalogMode | { readonly mode: 'unknown'; readonly label?: string }))
+      | { readonly version: 2; readonly mode: 'external'; readonly label?: string }
+    )
   )
+  | {
+    readonly version: typeof RETIRED_SUBAGENT_CATALOG_VERSION
+    readonly childId: SessionId
+    readonly mode: 'retired'
+  }
+  | {
+    readonly version: typeof RELABELED_SUBAGENT_CATALOG_VERSION
+    readonly childId: SessionId
+    readonly label: string
+  }
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
@@ -68,11 +93,23 @@ const continuableCatalogSchema = z.object({
 }).strict()
 const externalCatalogSchema = oneShotCatalogSchema.extend({ version: z.literal(2), mode: z.literal('external') })
 const unknownCatalogSchema = oneShotCatalogSchema.extend({ version: z.literal(1), mode: z.literal('unknown') })
+const retiredCatalogSchema = z.object({
+  version: z.literal(RETIRED_SUBAGENT_CATALOG_VERSION),
+  childId: sessionIdSchema,
+  mode: z.literal('retired'),
+}).strict()
+const relabeledCatalogSchema = z.object({
+  version: z.literal(RELABELED_SUBAGENT_CATALOG_VERSION),
+  childId: sessionIdSchema,
+  label: z.string(),
+}).strict()
 const eventDataSchema = z.union([
   oneShotCatalogSchema,
   externalCatalogSchema,
   continuableCatalogSchema,
   unknownCatalogSchema,
+  retiredCatalogSchema,
+  relabeledCatalogSchema,
 ]) as z.ZodType<SubagentCatalogEvent>
 const viewSchema = z.array(z.union([
   oneShotCatalogSchema.omit({ version: true, childId: true, childCreatedAt: true }).extend({
@@ -98,17 +135,32 @@ const stateSchema: z.ZodType<SubagentCatalogState> = z.object({
 }).strict()
 
 /**
- * Materialize complete and unknown-mode child identities from parent catalog events.
+ * Materialize the current direct-child rows from parent catalog events. A
+ * retirement record removes the identity it names, a relabel record replaces a
+ * listed identity's label in place, and a later establishing record for the
+ * same identity lists it again in catalog event order.
  * @param state - parent catalog fold state.
  * @returns current direct-child rows in parent catalog event order.
  */
 function subagentCatalogEntries(state: SubagentCatalogState): SubagentCatalogEntry[] {
-  const entries: SubagentCatalogEntry[] = []
+  const entries = new Map<SessionId, SubagentCatalogEntry>()
   for (const data of iterateChunkedList(state.head)) {
+    if (data.version === RETIRED_SUBAGENT_CATALOG_VERSION) {
+      entries.delete(data.childId)
+      continue
+    }
+    if (data.version === RELABELED_SUBAGENT_CATALOG_VERSION) {
+      // A relabel names an identity that an earlier record already listed; a
+      // relabel for an unlisted identity changes nothing, so it cannot invent
+      // a row the catalog never established.
+      const listed = entries.get(data.childId)
+      if (listed !== undefined) entries.set(data.childId, { ...listed, label: data.label })
+      continue
+    }
     const { version: _version, childId, childCreatedAt, ...descriptor } = data
-    entries.push({ id: childId, createdAt: childCreatedAt, ...descriptor })
+    entries.set(childId, { id: childId, createdAt: childCreatedAt, ...descriptor })
   }
-  return entries
+  return [...entries.values()]
 }
 
 /** Parent-owned direct-child catalog projection; invalid own facts reject restoration. */
@@ -120,7 +172,7 @@ export const subagentCatalogProjectionDefinition = {
     if (event.type !== 'subagent/catalog' || event.seq < state.inheritedEventCount) return state
     return { ...state, head: appendChunkedList(state.head, eventDataSchema.parse(event.data)) }
   },
-  stateVersion: 6,
+  stateVersion: 8,
   wire: { viewSchema, view: subagentCatalogEntries },
 } satisfies ProjectionDefinition<'subagentCatalog', SubagentCatalogState>
 
@@ -159,6 +211,37 @@ export function establishExternalCatalogChild(parent: Session, childId: SessionI
     childId,
     childCreatedAt: Date.now(),
     mode: 'external',
+    label,
+  })
+}
+
+/**
+ * Retire one listed direct child from its parent's catalog. Only the catalog
+ * entry disappears: the child Session stays readable through Session tooling,
+ * and a later establishing record for the same identity lists it again.
+ * @param parent - durable direct parent whose catalog lists the child.
+ * @param childId - durable direct-child Session identity to retire.
+ */
+export function retireCatalogChild(parent: Session, childId: SessionId): void {
+  parent.append('subagent/catalog', {
+    version: RETIRED_SUBAGENT_CATALOG_VERSION,
+    childId,
+    mode: 'retired',
+  })
+}
+
+/**
+ * Replace the display label of one listed direct child. The identity keeps its
+ * position, mode, and creation time; a relabel for an identity the catalog does
+ * not list changes no view, which keeps a late or repeated call convergent.
+ * @param parent - durable direct parent whose catalog lists the child.
+ * @param childId - durable direct-child Session identity to relabel.
+ * @param label - replacement display label.
+ */
+export function relabelCatalogChild(parent: Session, childId: SessionId, label: string): void {
+  parent.append('subagent/catalog', {
+    version: RELABELED_SUBAGENT_CATALOG_VERSION,
+    childId,
     label,
   })
 }

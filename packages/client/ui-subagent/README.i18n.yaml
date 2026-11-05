@@ -15,11 +15,14 @@
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-client-ui-subagent/use-this-package:
-  en: d00a6c7ffced5dc7
-  zh: 616220bbdfdc70a6
+  en: 462013910ae771c5
+  zh: 5132d63fb7254934
 /deepseek-ai-dsh-client-ui-subagent/use-this-package/browsing-the-tree:
-  en: 4ecdca030e42109d
-  zh: 406b08590ba8df83
+  en: cdf73ee3cf0e0a35
+  zh: a19099847bdb73ba
+/deepseek-ai-dsh-client-ui-subagent/use-this-package/removing-a-catalog-row:
+  en: ff2d88f099a1250b
+  zh: 0a923f7f2065e668
 /deepseek-ai-dsh-client-ui-subagent/use-this-package/continuing-a-conversation:
   en: e4ec261d3b122eb5
   zh: 320bb2efc93dccdc
@@ -30,8 +33,8 @@
   en: c158f12dcaed87b7
   zh: e5d315e7b1fb4fa9
 /deepseek-ai-dsh-client-ui-subagent/understand-the-implementation/catalog-derivation:
-  en: 41492c7bf30f2a48
-  zh: b225f51bd226d60d
+  en: 9a2b0bb43a4855d6
+  zh: 780fee01f3412009
 /deepseek-ai-dsh-client-ui-subagent/understand-the-implementation/duration-completion-and-tokens:
   en: dcbc58d4cad47fa8
   zh: e962a8cbdfd4a914

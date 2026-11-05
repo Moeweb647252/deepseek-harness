@@ -3736,6 +3736,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{RemoteError} `gateway/bad-request` for an empty id, otherwise `gateway/internal`.'],
       },
       {
+        signature: '@Remote(\'retire\') retire(request: SubagentRetireRequest): SubagentRetireReceipt',
+        description: 'Remote face of catalog retirement under one durable parent address: remove one direct child from its parent\'s `subagentCatalog` listing without deleting or interrupting the child Session.\n\nThe parent Session owns the catalog, so its Agent must be live to append the retirement record. The record names one identity and an unlisted identity changes no view, which keeps repeated and racing calls convergent.',
+        parameters: [{ name: 'request', description: 'durable parent and child identities.' }],
+        returns: 'acknowledgement that the retirement record was appended.',
+        throws: ['{RemoteError} `gateway/bad-request` for an empty id, `subagent/parent-unavailable` when no live Agent carries the parent, otherwise `gateway/internal`.'],
+      },
+      {
         signature: 'registerProvider(provider: SubagentProvider): () => void',
         description: 'Register a provider under its name. Registration is effect-scoped and HMR safe; removing a provider blocks new starts but does not revoke runs that were already returned to their holders. Providers without either execution method are rejected with UNSUPPORTED_CAPABILITY before registration.',
         parameters: [{ name: 'provider', description: 'the trusted provider implementation.' }],
@@ -9243,6 +9250,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SubagentResult {\n    readonly output: readonly ContentBlock[];\n    readonly structured?: unknown;\n    readonly diagnostic?: string;\n    readonly stopReason: SubagentStopReason;\n}',
   },
   {
+    name: 'SubagentRetireReceipt',
+    declaration: 'export interface SubagentRetireReceipt {\n    readonly retired: true;\n}',
+  },
+  {
+    name: 'SubagentRetireRequest',
+    declaration: 'export interface SubagentRetireRequest {\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n}',
+  },
+  {
     name: 'SubagentRun',
     declaration: 'export interface SubagentRun {\n    readonly id: SessionId;\n    readonly result: Promise<SubagentResult>;\n    dispose(): Promise<void>;\n}',
   },
@@ -9260,7 +9275,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    static inject;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    startActivation(spec: SubagentActivationSpec & {\n        readonly childId: SessionId;\n    }): Promise<SubagentActivation & {\n        readonly messageId: MessageId;\n    }>;\n    startActivation(spec: SubagentActivationSpec): Promise<SubagentActivation>;\n    async startActivation(spec: SubagentActivationSpec): Promise<SubagentActivation>;\n    rootOf(caller: Agent): Agent;\n    async waitForTreeWork(root: Agent): Promise<boolean>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainDescendants(parents: readonly Agent[]): Promise<void>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote({ name: \'prompt\', resources: { session: request => request.childSessionId } })\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote({ name: \'interruptByUser\', resources: { session: childSessionId => childSessionId } })\n    interruptByUser(childSessionId: SessionId): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () =>  /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    static inject;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    startActivation(spec: SubagentActivationSpec & {\n        readonly childId: SessionId;\n    }): Promise<SubagentActivation & {\n        readonly messageId: MessageId;\n    }>;\n    startActivation(spec: SubagentActivationSpec): Promise<SubagentActivation>;\n    async startActivation(spec: SubagentActivationSpec): Promise<SubagentActivation>;\n    rootOf(caller: Agent): Agent;\n    async waitForTreeWork(root: Agent): Promise<boolean>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainDescendants(parents: readonly Agent[]): Promise<void>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote({ name: \'prompt\', resources: { session: request => request.childSessionId } })\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote({ name: \'interruptByUser\', resources: { session: childSessionId => childSessionId } })\n    interruptByUser(childSessionId: SessionId): SubagentInterruptReceipt;\n    @Remote(\'retire\')\n    retire(request: SubagentRetire /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',
