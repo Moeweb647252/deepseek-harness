@@ -35,6 +35,9 @@
 /deepseek-ai-dsh-subagent/use-this-package/messaging-interrupting-and-discovering:
   en: bf3175c2218a16dd
   zh: 4be9271efe71ddb7
+/deepseek-ai-dsh-subagent/use-this-package/removing-a-child-from-the-catalog:
+  en: e285a1979fa7e726
+  zh: 5152132e8b764e63
 /deepseek-ai-dsh-subagent/use-this-package/failure-and-recovery:
   en: 0dc416ded19e304e
   zh: 4726e5fe5f188709
@@ -51,8 +54,8 @@
   en: 61cddba23f4e7d1c
   zh: 052c8331a747403f
 /deepseek-ai-dsh-subagent/understand-the-implementation/activation-settlement:
-  en: fc8938de925b1a97
-  zh: b50e1f948d60b93c
+  en: df500842d12b9129
+  zh: 2468edcb1f465aef
 /deepseek-ai-dsh-subagent/understand-the-implementation/restoring-child-composition:
   en: 843f9f4319ca2ae3
   zh: 218bf355816d4ff6

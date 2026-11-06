@@ -896,6 +896,36 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
   })
 
 
+  it('retires a catalog row and appends its record to the parent log', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-retire'))
+    await page.getByRole('tree', { name: 'Sessions' })
+      .getByRole('treeitem', { name: /Ask a research subagent to/ })
+      .click()
+    await page.getByRole('button', { name: '2 subagents', exact: true }).hover()
+    const tree = page.getByRole('tree', { name: 'Subagent sessions' })
+    const oneShotRow = tree.getByRole('treeitem', { name: new RegExp(ONE_SHOT_LABEL) })
+    await oneShotRow.waitFor({ timeout: 15_000 })
+    // The retire Remote appends through the durable parent's live Agent, which
+    // viewing the root session establishes.
+    await expect.poll(() => scaffold.ctx.agents.get(parentId), { timeout: 15_000 }).not.toBeUndefined()
+    await oneShotRow
+      .getByRole('button', { name: `Remove ${ONE_SHOT_LABEL} from the catalog`, exact: true })
+      .click()
+    // The row disappears through the live `subagentCatalog` projection, and the
+    // header count follows it.
+    await expect.poll(
+      () => tree.getByRole('treeitem', { name: new RegExp(ONE_SHOT_LABEL) }).count(),
+      { timeout: 15_000 },
+    ).toBe(0)
+    await page.getByRole('button', { name: '1 subagent', exact: true }).waitFor({ timeout: 15_000 })
+    await expect.poll(async () => {
+      const events = await readPersistedEvents(scaffold, parentId)
+      return events.some(event => event.type === 'subagent/catalog'
+        && event.data.version === 3
+        && event.data.mode === 'retired'
+        && event.data.childId === oneShotId)
+    }, { timeout: 10_000 }).toBe(true)
+  })
 })
 
 describe('web e2e: migration-required subagent catalog', () => {

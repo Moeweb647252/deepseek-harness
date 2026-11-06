@@ -316,3 +316,86 @@ describe('subagent interrupt Remote', () => {
     )
   })
 })
+
+/** The runtime plus a live-parent registry whose Session records appended events. */
+async function retireBench(options: { live?: boolean; appendFails?: boolean } = {}) {
+  const ctx = new Context()
+  await mountWorkingDirectoryFixture(ctx)
+  if (ctx.get('sessionProjections') === undefined) await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(SubagentRuntime)
+  const events: { readonly type: string; readonly data: unknown }[] = []
+  if (options.live !== false) {
+    ctx.provide('agents', {
+      get: (id: SessionId) => id !== PARENT
+        ? undefined
+        : {
+          status: 'idle',
+          session: {
+            append: (type: string, data: unknown) => {
+              if (options.appendFails === true) throw new Error('append failed')
+              events.push({ type, data })
+            },
+          },
+        },
+    } as never)
+  }
+  return { subagents: ctx.subagents, events }
+}
+
+describe('subagent retire Remote', () => {
+  it('appends one retirement record for the parent-owned child', async () => {
+    const { subagents, events } = await retireBench()
+
+    expect(subagents.retire({ parentSessionId: PARENT, childSessionId: CHILD }))
+      .toEqual({ retired: true })
+    expect(events).toEqual([{
+      type: 'subagent/catalog',
+      data: { version: 3, childId: CHILD, mode: 'retired' },
+    }])
+  })
+
+  it('accepts a repeated retirement of the same child', async () => {
+    const { subagents, events } = await retireBench()
+    const request = { parentSessionId: PARENT, childSessionId: CHILD }
+
+    subagents.retire(request)
+    expect(subagents.retire(request)).toEqual({ retired: true })
+    expect(events).toHaveLength(2)
+  })
+
+  it('rejects empty child and parent ids before appending', async () => {
+    const { subagents, events } = await retireBench()
+
+    for (const [childSessionId, parentSessionId] of [
+      [SessionId(''), PARENT],
+      [CHILD, SessionId('')],
+    ] as const) {
+      const field = childSessionId.length === 0 ? 'childSessionId' : 'parentSessionId'
+      expect(() => subagents.retire({ parentSessionId, childSessionId }))
+        .toThrow(expect.objectContaining(emptyIdFailure('subagent.retire', field)))
+    }
+    expect(events).toEqual([])
+  })
+
+  it('answers a missing live parent as parent-unavailable', async () => {
+    const { subagents, events } = await retireBench({ live: false })
+
+    expect(() => subagents.retire({ parentSessionId: PARENT, childSessionId: CHILD }))
+      .toThrow(expect.objectContaining({
+        code: 'subagent/parent-unavailable',
+        details: { parentSessionId: PARENT },
+      }))
+    expect(events).toEqual([])
+  })
+
+  it('answers an append failure as internal', async () => {
+    const { subagents } = await retireBench({ appendFails: true })
+
+    expect(() => subagents.retire({ parentSessionId: PARENT, childSessionId: CHILD }))
+      .toThrow(expect.objectContaining({
+        code: 'gateway/internal',
+        message: 'subagent catalog retirement failed',
+        details: {},
+      }))
+  })
+})
