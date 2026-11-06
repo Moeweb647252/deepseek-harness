@@ -49,6 +49,8 @@ import type {
   SubagentPromptReceipt,
   SubagentPromptRequest,
   SubagentPromptRequestId,
+  SubagentRetireReceipt,
+  SubagentRetireRequest,
 } from './control-types.ts'
 import type {
   SubagentCapabilities,
@@ -69,10 +71,12 @@ import SubagentManager from './manager.ts'
 import { listDescendants as listSubagentDescendants } from './list-children.ts'
 import type { SubagentDescendantListEntry } from './list-children.ts'
 import { subagentIdentityProjectionDefinition, subagentTimingProjectionDefinition } from './projection.ts'
-import { subagentCatalogProjectionDefinition } from './catalog.ts'
+import { retireCatalogChild, subagentCatalogProjectionDefinition } from './catalog.ts'
 
 export type {} from './catalog.ts'
 export type {} from './projection.ts'
+export { relabelCatalogChild, retireCatalogChild } from './catalog.ts'
+export type { SubagentCatalogEvent } from './catalog.ts'
 export * from './out-of-process.ts'
 export { AssistantOutputFold, finalAssistantOutput } from './assistant-output.ts'
 export { SubagentRunId } from './types.ts'
@@ -462,6 +466,40 @@ export class SubagentRuntime extends TypertRemoteService {
       throw new RemoteError('gateway/internal', 'subagent interrupt failed', {}, { cause: error })
     }
     return { accepted: true }
+  }
+
+  /**
+   * Remote face of catalog retirement under one durable parent address: remove
+   * one direct child from its parent's `subagentCatalog` listing without
+   * deleting or interrupting the child Session.
+   *
+   * The parent Session owns the catalog, so its Agent must be live to append
+   * the retirement record. The record names one identity and an unlisted
+   * identity changes no view, which keeps repeated and racing calls
+   * convergent.
+   * @param request - durable parent and child identities.
+   * @returns acknowledgement that the retirement record was appended.
+   * @throws {RemoteError} `gateway/bad-request` for an empty id,
+   *   `subagent/parent-unavailable` when no live Agent carries the parent,
+   *   otherwise `gateway/internal`.
+   */
+  @Remote('retire')
+  retire(request: SubagentRetireRequest): SubagentRetireReceipt {
+    validateControlRequest('subagent.retire', request)
+    const parent = this.ctx.get('agents')?.get(request.parentSessionId)
+    if (parent === undefined) {
+      throw new RemoteError(
+        'subagent/parent-unavailable',
+        `parent session "${request.parentSessionId}" is not live`,
+        { parentSessionId: request.parentSessionId },
+      )
+    }
+    try {
+      retireCatalogChild(parent.session, request.childSessionId)
+    } catch (error: unknown) {
+      throw new RemoteError('gateway/internal', 'subagent catalog retirement failed', {}, { cause: error })
+    }
+    return { retired: true }
   }
 
   /**

@@ -129,6 +129,75 @@ describe('restoreReleasedV4Artifact', () => {
       data: { ...data, mode: 'one-shot' } }]), known)).toThrow('duplicate catalog child')
   })
 
+  it('accepts a retirement record and a later re-listing of the same child', () => {
+    const known = new Set([...KNOWN, 'subagent/catalog'])
+    const listed = {
+      type: 'subagent/catalog', seq: 0, time: 1,
+      data: { version: 1, childId: 'retired', childCreatedAt: 2, mode: 'unknown' },
+    }
+    const retired = {
+      type: 'subagent/catalog', seq: 1, time: 2,
+      data: { version: 3, childId: 'retired', mode: 'retired' },
+    }
+    const relisted = { ...listed, seq: 2, time: 3 }
+    const valid = artifact([listed, retired])
+    expect(restoreReleasedV4Artifact(valid, known)).toBe(valid)
+    // A retired identity may be established again, which the projection re-lists.
+    expect(restoreReleasedV4Artifact(artifact([listed, retired, relisted]), known)).toBeTruthy()
+    // Retiring an identity the catalog never listed changes nothing, and a repeat is not a conflict.
+    expect(restoreReleasedV4Artifact(artifact([{ ...retired, seq: 0 }]), known)).toBeTruthy()
+    expect(restoreReleasedV4Artifact(artifact([listed, retired, { ...retired, seq: 2, time: 3 }]), known)).toBeTruthy()
+  })
+
+  it('rejects malformed retirement records and listing a child that is still listed', () => {
+    const known = new Set([...KNOWN, 'subagent/catalog'])
+    const data = { version: 1, childId: 'unreadable', childCreatedAt: 2, mode: 'unknown' }
+    const listed = { type: 'subagent/catalog', seq: 0, time: 1, data }
+    const retirement = (payload: Record<string, unknown>) =>
+      artifact([{ type: 'subagent/catalog', seq: 0, time: 1, data: payload }])
+    for (const invalid of [
+      { version: 3, childId: 'retired', mode: 'retired', childCreatedAt: 2 },
+      { version: 3, childId: 'retired', mode: 'retired', label: 'retained' },
+      { version: 3, childId: 'retired', mode: 'unknown' },
+      { version: 3, childId: 1, mode: 'retired' },
+    ]) {
+      expect(() => restoreReleasedV4Artifact(retirement(invalid), known))
+        .toThrow('supported versioned catalog fact')
+    }
+    // Re-listing without a retirement in between remains corrupt.
+    expect(() => restoreReleasedV4Artifact(artifact([listed, { ...listed, seq: 1 }]), known))
+      .toThrow('duplicate catalog child')
+  })
+
+  it('accepts a relabel record for a listed child and rejects a malformed one', () => {
+    const known = new Set([...KNOWN, 'subagent/catalog'])
+    const listed = {
+      type: 'subagent/catalog', seq: 0, time: 1,
+      data: { version: 1, childId: 'renamed', childCreatedAt: 2, mode: 'unknown' },
+    }
+    const relabeled = {
+      type: 'subagent/catalog', seq: 1, time: 2,
+      data: { version: 4, childId: 'renamed', label: 'new-name' },
+    }
+    const valid = artifact([listed, relabeled])
+    expect(restoreReleasedV4Artifact(valid, known)).toBe(valid)
+    // A relabel touches no membership, so it satisfies neither the duplicate
+    // rule nor a re-establishment: repeating it stays valid.
+    expect(restoreReleasedV4Artifact(artifact([listed, relabeled, { ...relabeled, seq: 2, time: 3 }]), known))
+      .toBeTruthy()
+    const malformed = (payload: Record<string, unknown>) =>
+      artifact([{ type: 'subagent/catalog', seq: 0, time: 1, data: payload }])
+    for (const invalid of [
+      { version: 4, childId: 'renamed' },
+      { version: 4, childId: 'renamed', label: 1 },
+      { version: 4, childId: 'renamed', label: 'new-name', childCreatedAt: 2 },
+      { version: 4, childId: 'renamed', label: 'new-name', mode: 'continuable' },
+    ]) {
+      expect(() => restoreReleasedV4Artifact(malformed(invalid), known))
+        .toThrow('supported versioned catalog fact')
+    }
+  })
+
   it('validates only the envelope in physical mode', () => {
     const unknown = conversation()
     unknown.splice(2, 0, { type: 'campaign/unknown', seq: 0, time: 1, data: { x: 1 } })

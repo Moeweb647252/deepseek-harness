@@ -227,6 +227,10 @@ type SubagentInterruptAuthority =
 
 父级拥有的 `subagentCatalog` 投影列出所有本地子级及 parent 投递的外部子级。caller 投递的外部执行由调用方负责成员关系与结果收集；本地工作流子级在完成后仍可被发现。外部条目携带 `mode: 'external'`，不能打开子 Session 或接受后续消息。目录在创建时记录成员关系，不携带执行状态。`list_agents` 展示根和可达的可继续后代，其活跃状态为 `running` 或 `inactive`；参见[控制工具](../../packages/subagent/tool-subagent-control/README.zh.md#list_agents)。
 
+父级通过 `retireCatalogChild()` 追加版本 3 记录，从自己的目录中退役一个已列出的身份；该记录只点名被移除的身份。浏览器以 `subagents.retire` 触达同一操作，其请求携带 `parentSessionId` 与 `childSessionId`，解析该 parent 的在线 Agent，并返回 `{ retired: true }`。退役只改变该列表本身：子级的运行、Session 日志与 Session 记录保持可读，同一身份之后的新建立记录会再次列出它，因此退役未列出的身份不会改变任何视图，重复调用也会收敛。空 id 以 `gateway/bad-request` 拒绝，没有在线 Agent 的 parent 以 `subagent/parent-unavailable` 拒绝，追加失败以 `gateway/internal` 拒绝。
+
+`relabelCatalogChild(parent, childId, label)` 追加版本 4 的重新标注记录，就地替换某个已列出身份的显示标签：成员关系、模式、创建时间与目录位置都保持不变，因此该记录只改写一个行的标题，既不新增也不移除行；为未列出的身份重新标注不会改变任何视图。因此目录载荷依次为 v0 本地模式、v1 未知子级、v2 外部执行、v3 退役、v4 重新标注，每个版本都被已发布格式的读取器接受。行标签只用于展示：`list_agents` 将其作为子级的 label 报告，Sidebar 聊天页签也用它作为标题，因此重新标注会同时到达这两个界面，而不改变子级的身份或模式。
+
 ## 结果与后端句柄
 
 SubagentResult 供程序消费方读取。activation 注册表保留外部后端句柄，直到释放完成。清理失败不会覆盖已捕获的执行结果：activation 结果与父级通知保留该结果，dispose 拒绝，而在线 subagent/end 事件报告 error。后端提供的诊断必须满足下述安全信息要求。
@@ -375,7 +379,7 @@ interface SubagentProvider {
 
 模型侧的 `list_agents` 适配器将当前活动表示为 `running` 或 `inactive`。这些值不描述任务完成情况，也不保证 `send_message` 会成功。
 
-通过 `ctx.sessionQuery.observeSession(parentSessionId, { signal })`，可从 `observation.projections?.values.subagentCatalog` 获取直接子级条目；调用方使用 `using` 释放观察对象。条目遵循父会话事件顺序，不读取子级日志，也不枚举 Session 语料库。查询失败直接传播；缺少目录投影意味着发现功能不可用。浏览器条目从共享 projection store 派生成员关系，并从 Session 状态补充活动状态；control stream 推送完整目录更新。`listDescendants()` 递归读取这些目录，并从每个子级目录推导 `hasChildren`。[父目录 Agent Note](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 说明创建、fork 隔离、排序和持久化成本。
+通过 `ctx.sessionQuery.observeSession(parentSessionId, { signal })`，可从 `observation.projections?.values.subagentCatalog` 获取直接子级条目；调用方使用 `using` 释放观察对象。条目遵循父会话事件顺序，不读取子级日志，也不枚举 Session 语料库。查询失败直接传播；缺少目录投影意味着发现功能不可用。浏览器条目从共享 projection store 派生成员关系，并从 Session 状态补充活动状态；control stream 推送完整目录更新。`listDescendants()` 递归读取这些目录，并从每个子级目录推导 `hasChildren`。[父目录 Agent Note](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 说明创建、fork 隔离、排序和持久化成本；[退役格式记录](../persistence-changes/2026-10-19-subagent-catalog-retirement.zh.md)说明版本 3 载荷，[重新标注格式记录](../persistence-changes/2026-10-21-subagent-catalog-relabel.zh.md)说明版本 4 载荷，[目录行移除 Agent Note](../../.agents/notes/implemented/feature/2026-10-20-catalog-row-removal.zh.md)说明浏览器端的移除决策。
 
 `SubagentRuntime.listDescendants(rootSessionId)` 以稳定前序递归调用同一目录读取函数，保留每个父级的事件顺序。外部条目是没有本地 Session 的叶节点。一次性和未知模式条目仍是遍历节点；未知模式产生 `unsupported` 诊断。无法读取的子级目录产生 `corrupt` 或 `unavailable`，只停止该分支。根读取失败、服务或投影缺失、取消会使整个查询失败。每个可达目录只观察一次，并在下一次读取前释放；重复 id 和循环引用会被跳过。可达目录中不存在的 Session 不会被发现，包括普通 Session fork 及其下的子 agent。每行携带目录中的父级和相对根的深度：
 
@@ -544,6 +548,23 @@ listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<Subagen
  *   otherwise `gateway/internal`.
  */
 @Remote({ name: 'interruptByUser', resources: { session: childSessionId => childSessionId } }) interruptByUser(childSessionId: SessionId): SubagentInterruptReceipt
+
+/**
+ * Remote face of catalog retirement under one durable parent address: remove
+ * one direct child from its parent's `subagentCatalog` listing without
+ * deleting or interrupting the child Session.
+ *
+ * The parent Session owns the catalog, so its Agent must be live to append
+ * the retirement record. The record names one identity and an unlisted
+ * identity changes no view, which keeps repeated and racing calls
+ * convergent.
+ * @param request - durable parent and child identities.
+ * @returns acknowledgement that the retirement record was appended.
+ * @throws {RemoteError} `gateway/bad-request` for an empty id,
+ *   `subagent/parent-unavailable` when no live Agent carries the parent,
+ *   otherwise `gateway/internal`.
+ */
+@Remote('retire') retire(request: SubagentRetireRequest): SubagentRetireReceipt
 
 /**
  * Register a provider under its name. Registration is effect-scoped and HMR

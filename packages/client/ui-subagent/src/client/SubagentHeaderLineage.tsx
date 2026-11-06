@@ -7,7 +7,7 @@ import {
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
-  IconChevronRightOutlineRegular, IconRefreshOutlineRegular, IconUsersOutlineRegular,
+  IconChevronRightOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular, IconUsersOutlineRegular,
   IconCheckOutlineRegular, MenuSurface, StateDot, Tooltip, useAnchoredPosition,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -24,11 +24,34 @@ type SubagentCatalogSnapshot = Omit<SessionProjectionSnapshot, 'values' | 'state
 }
 type Catalogs = Readonly<Record<SessionId, SubagentCatalogSnapshot>>
 
+/**
+ * Order one level's rows so running children lead, keeping the catalog's own
+ * order inside each group. The catalog projection stays the durable order; this
+ * is the list's presentation order, so a row moves when its child starts or
+ * stops running and returns to its catalog position once it settles.
+ * @param rows - one level's rows with their joined activity.
+ * @returns the same rows, running first, each group in catalog order.
+ */
+function runningFirst(
+  rows: SubagentCatalogSnapshot['entries'],
+): SubagentCatalogSnapshot['entries'] {
+  const running = rows.filter(row => row.activity === 'running')
+  return running.length === 0 ? rows : [...running, ...rows.filter(row => row.activity !== 'running')]
+}
+
 /** Business actions supplied by the slot registration. */
 export type SubagentCatalogInjected = {
   openChild: (address: SubagentAddress) => void
   openChildAside: (address: SubagentAddress) => void
   refreshProjection: (parentSessionId: SessionId) => void
+  /**
+   * Drop one direct child from its parent's durable catalog listing.
+   * @param parentSessionId - live parent whose catalog lists the child.
+   * @param childSessionId - direct child to retire; its Session log stays readable.
+   * @returns fulfills after the Host appended the retirement record, and rejects
+   * with the Remote failure that prevented it.
+   */
+  retireChild: (parentSessionId: SessionId, childSessionId: SessionId) => Promise<void>
 }
 
 /** Root catalog actions and availability of its optional footer. */
@@ -51,9 +74,12 @@ interface CatalogRowsProps {
   summaries: Readonly<Record<SessionId, SessionSummary>>
   expanded: ReadonlySet<SessionId>
   level: number
+  /** Children whose retirement the Host is still acknowledging. */
+  retiring: ReadonlySet<SessionId>
   openChild: (address: SubagentAddress) => void
   openChildAside: (address: SubagentAddress) => void
   refreshProjection: (parentSessionId: SessionId) => void
+  retireChild: (parentSessionId: SessionId, childSessionId: SessionId) => void
   toggleBranch: (childSessionId: SessionId) => void
   closeCatalog: () => void
 }
@@ -234,10 +260,48 @@ function catalogProgress(entries: SubagentCatalogSnapshot['entries'], summaries:
   ].join('\u2002·\u2002')
 }
 
+/**
+ * One row's catalog-retirement control. A running child and one whose own call
+ * is pending keep the control visible but disabled, so the row geometry stays
+ * stable; the blocked reason rides a native `title` because a disabled button
+ * fires no hover for its Tooltip.
+ */
+function RetireButton({
+  label, running, pending, onRetire, t,
+}: {
+  label: string
+  running: boolean
+  pending: boolean
+  onRetire: () => void
+  t: TranslateNS<typeof NS>
+}) {
+  const blocked = running || pending
+  const hint = running ? 'retire.running' : pending ? 'retire.pending' : 'retire.action'
+  return (
+    <Tooltip label={t(hint)} side="bottom" align="end">
+      <button
+        type="button"
+        className={css.retireButton}
+        aria-label={t(running ? 'retire.running.aria' : 'retire.aria', { label })}
+        title={blocked ? t(hint) : undefined}
+        disabled={blocked}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onRetire()
+        }}
+        onKeyDown={(event) => { event.stopPropagation() }}
+      >
+        <IconTrashOutlineRegular size={14} />
+      </button>
+    </Tooltip>
+  )
+}
+
 /** Render one catalog level and recurse only through explicitly expanded rows. */
 function CatalogRows({
-  parentSessionId, currentSessionId, catalog, catalogs, summaries, expanded, level,
-  openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog, t,
+  parentSessionId, currentSessionId, catalog, catalogs, summaries, expanded, level, retiring,
+  openChild, openChildAside, refreshProjection, retireChild, toggleBranch, closeCatalog, t,
 }: CatalogRowsProps & { t: TranslateNS<typeof NS> }) {
   const [now, setNow] = useState(() => Date.now())
   const running = catalog.entries.some(entry => entry.activity === 'running')
@@ -401,22 +465,35 @@ function CatalogRows({
                     </span>
                   )
                   : external ? <span className={css.sidebarSpace} /> : (
-                    <Tooltip label={t('open.sidebar')} delayMs={500} side="bottom" align="end">
-                      <button
-                        type="button"
-                        className={css.sidebarButton}
-                        aria-label={t('open.sidebar.aria', { label: primaryLabel })}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          openChildAside({ parentSessionId, childSessionId: entry.id, mode: entry.mode })
-                          closeCatalog()
-                        }}
-                        onKeyDown={(event) => { event.stopPropagation() }}
-                      >
-                        <IconChevronRightOutlineRegular />
-                      </button>
-                    </Tooltip>
+                    <span className={css.actions}>
+                      <Tooltip label={t('open.sidebar')} delayMs={500} side="bottom" align="end">
+                        <button
+                          type="button"
+                          className={css.sidebarButton}
+                          aria-label={t('open.sidebar.aria', { label: primaryLabel })}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            openChildAside({ parentSessionId, childSessionId: entry.id, mode: entry.mode })
+                            closeCatalog()
+                          }}
+                          onKeyDown={(event) => { event.stopPropagation() }}
+                        >
+                          <IconChevronRightOutlineRegular />
+                        </button>
+                      </Tooltip>
+                      {/* A running child stays listed: its retirement record is
+                          durable, so removing the row would hide a live workload
+                          from the count, the switcher, and the workspace tree
+                          while it keeps running. */}
+                      <RetireButton
+                        label={primaryLabel}
+                        running={entry.activity === 'running'}
+                        pending={retiring.has(entry.id)}
+                        onRetire={() => { retireChild(parentSessionId, entry.id) }}
+                        t={t}
+                      />
+                    </span>
                   )}
               </div>
             </div>
@@ -437,9 +514,11 @@ function CatalogRows({
                       summaries={summaries}
                       expanded={expanded}
                       level={level + 1}
+                      retiring={retiring}
                       openChild={openChild}
                       openChildAside={openChildAside}
                       refreshProjection={refreshProjection}
+                      retireChild={retireChild}
                       toggleBranch={toggleBranch}
                       closeCatalog={closeCatalog}
                       t={t}
@@ -491,7 +570,7 @@ type CatalogDropdownProps = CatalogDropdownSharedProps & (
 function CatalogDropdown(props: CatalogDropdownProps) {
   const {
     rootSessionId, currentSessionId, displayTitle, openTitle, variant,
-    useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t, hasSharedTasks = false,
+    useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, retireChild, t, hasSharedTasks = false,
   } = props
   const ancestorSwitcher = variant === 'switcher' && openTitle !== undefined
   const projections = useSessions(state => state.projectionsBySession)
@@ -503,20 +582,23 @@ function CatalogDropdown(props: CatalogDropdownProps) {
       const state = snapshot.state === 'idle'
         ? projected === undefined ? 'loading' : 'ready'
         : snapshot.state === 'migration-required' && projected !== undefined ? 'ready' : snapshot.state
+      const rows = (projected ?? []).map(entry => ({
+        ...entry,
+        activity: (statuses.get(entry.id)?.running ?? summaries[entry.id]?.running) === true
+          ? 'running' as const : 'inactive' as const,
+      }))
       return [id, {
         state,
         error: snapshot.error,
-        entries: (projected ?? []).map(entry => ({
-          ...entry,
-          activity: (statuses.get(entry.id)?.running ?? summaries[entry.id]?.running) === true
-            ? 'running' as const : 'inactive' as const,
-        })),
+        entries: runningFirst(rows),
       } satisfies SubagentCatalogSnapshot]
     }))
   }, [projections, summaries, statuses])
   const catalog = catalogs[rootSessionId]
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [retiring, setRetiring] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [retireError, setRetireError] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const countRef = useRef<HTMLSpanElement>(null)
@@ -570,6 +652,10 @@ function CatalogDropdown(props: CatalogDropdownProps) {
       pinnedRef.current = false
       setOpen(false)
       setExpanded(new Set())
+      setRetireError(null)
+      // Pending marks belong to the menu occurrence: a settled call has already
+      // dropped its row, and a later catalog record may re-establish that id.
+      setRetiring(new Set())
     }
     if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
   }
@@ -621,6 +707,30 @@ function CatalogDropdown(props: CatalogDropdownProps) {
     refreshProjection(childSessionId)
   }
 
+  const markRetiring = (childSessionId: SessionId, value: boolean): void => {
+    setRetiring((current) => {
+      const next = new Set(current)
+      if (value) next.add(childSessionId)
+      else next.delete(childSessionId)
+      return next
+    })
+  }
+
+  // The retirement record reaches this menu through the live `subagentCatalog`
+  // projection, so success needs no refresh; only the transient per-row pending
+  // mark and the failure notice stay local.
+  const retire = (parentSessionId: SessionId, childSessionId: SessionId): void => {
+    setRetireError(null)
+    markRetiring(childSessionId, true)
+    retireChild(parentSessionId, childSessionId).then(
+      () => { markRetiring(childSessionId, false) },
+      () => {
+        markRetiring(childSessionId, false)
+        setRetireError(t('retire.error'))
+      },
+    )
+  }
+
   useEffect(() => {
     if (!open) return
     const closeOutside = (event: PointerEvent): void => {
@@ -662,6 +772,8 @@ function CatalogDropdown(props: CatalogDropdownProps) {
     pinnedRef.current = false
     setOpen(false)
     setExpanded(new Set())
+    setRetireError(null)
+    setRetiring(new Set())
   }, [visible, open])
 
   if (!visible) return null
@@ -777,6 +889,12 @@ function CatalogDropdown(props: CatalogDropdownProps) {
           }}
           onPointerLeave={scheduleHoverClose}
         >
+          {/* The failure notice pins above the scrolling tree inside the menu
+              body: a row's removal can fail while the menu stays open, and the
+              notice must neither close the catalog nor scroll out of it. */}
+          {retireError !== null && (
+            <div className={css.retireError} role="alert">{retireError}</div>
+          )}
           <div className={css.menuBody}>
             {hasSharedTasks && (
               <div className={css.sectionHeader} data-subagent-section-header>
@@ -797,9 +915,11 @@ function CatalogDropdown(props: CatalogDropdownProps) {
                 summaries={summaries}
                 expanded={expanded}
                 level={1}
+                retiring={retiring}
                 openChild={openChild}
                 openChildAside={openChildAside}
                 refreshProjection={refreshProjection}
+                retireChild={retire}
                 toggleBranch={toggleBranch}
                 closeCatalog={() => { changeOpen(false) }}
                 t={t}
@@ -836,7 +956,7 @@ export function SubagentCatalogAction(props: SubagentCatalogActionProps) {
 /** Bind task-board visibility only in root conversations. */
 function RootCatalogAction({
   sessionId, useProjection, useSessions, useSessionStatus, useFooterAvailable,
-  openChild, openChildAside, refreshProjection, t, renderSlot,
+  openChild, openChildAside, refreshProjection, retireChild, t, renderSlot,
 }: SubagentCatalogActionProps) {
   const hasSharedTasks = useProjection('agentTeam', team => team?.enabled === true
     && team.tasks.some(task => task.status !== 'deleted'))
@@ -855,6 +975,7 @@ function RootCatalogAction({
       openChild={openChild}
       openChildAside={openChildAside}
       refreshProjection={refreshProjection}
+      retireChild={retireChild}
       t={t}
     />
   )
@@ -867,7 +988,7 @@ function RootCatalogAction({
  */
 export function SubagentHeaderLineage({
   lineageSessionId, displayTitle, openTitle,
-  useSessions, useSession, useSessionStatus, openChild, openChildAside, refreshProjection, t,
+  useSessions, useSession, useSessionStatus, openChild, openChildAside, refreshProjection, retireChild, t,
 }: SubagentHeaderLineageProps) {
   const address = useSession(session => session.subagent?.address)
   const parentId = useSessions((state) => {
@@ -878,7 +999,9 @@ export function SubagentHeaderLineage({
     const summary = state.byId[lineageSessionId]
     return summary?.origin === 'subagent' ? summary.parentId : undefined
   })
-  const shared = { useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t }
+  const shared = {
+    useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, retireChild, t,
+  }
   // Root sessions carry no breadcrumb; their descendant count lives in the
   // header actions band (SubagentCatalogAction).
   if (parentId === undefined) return null

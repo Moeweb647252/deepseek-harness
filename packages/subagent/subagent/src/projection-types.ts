@@ -27,7 +27,12 @@ export type KnownSubagentCatalogFields =
     readonly label: string
   }
 
-/** One current direct-child discovery row materialized from parent facts. */
+/**
+ * One current direct-child discovery row materialized from parent facts. The
+ * label is the child's display label: it starts as the creation label from the
+ * `subagent/descriptor` and is replaced in place by a catalog relabel record,
+ * so it is mutable presentation while `id` and `createdAt` are not.
+ */
 export type SubagentCatalogEntry =
   & {
     readonly id: SessionId

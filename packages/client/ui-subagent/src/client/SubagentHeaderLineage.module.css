@@ -385,7 +385,17 @@
   grid-row: 2;
 }
 
+/* The trailing actions keep their fixed width so a long label still truncates
+   in the flexible content column instead of pushing the row wider than the menu. */
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
 .sidebarButton,
+.retireButton,
 .sidebarSpace {
   box-sizing: border-box;
   flex: none;
@@ -400,7 +410,8 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.sidebarButton {
+.sidebarButton,
+.retireButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -417,10 +428,31 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* Destructive by ink and hover fill, like the shared menu's danger row. */
+.retireButton:focus-visible:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.retireButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.retireButton svg {
+  width: 14px;
+  height: 14px;
+}
+
 @media (hover: hover) {
   .sidebarButton:hover {
     background: var(--dsw-alias-interactive-bg-hover);
     color: var(--dsw-alias-label-primary);
+  }
+
+  .retireButton:hover:not(:disabled) {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
+    color: var(--dsw-alias-state-error-primary);
   }
 }
 
@@ -472,6 +504,19 @@
 /* A leaf beside expandable siblings keeps their disclosure column before its status marker. */
 .children > .node > .row:has(> .disclosureSpace)::before {
   width: 33px;
+}
+
+/* The menu keeps its rows while a retirement fails: the notice sits above the
+   tree and is replaced on the next attempt. */
+.retireError {
+  flex: none;
+  margin: 2px 2px 4px;
+  padding: 6px 8px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .notice,

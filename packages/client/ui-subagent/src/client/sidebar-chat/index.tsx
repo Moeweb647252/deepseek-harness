@@ -1,7 +1,7 @@
 /** Right-Sidebar presentation of an existing subagent Conversation. */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  ISessions, SessionReference,
+  ISessions, SessionListState, SessionReference,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ResourceProvider } from '@deepseek-ai/dsh-client-resources/client'
 import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -86,6 +86,22 @@ export function parseSubagentChatAddress(value: string): SubagentAddress | undef
   } catch (_invalidEncoding) {
     return undefined
   }
+}
+
+/**
+ * Resolve the chat tab title for one parsed address from the loaded snapshots.
+ * The parent catalog owns the mutable display label, so a relabel shows here;
+ * the child's own descriptor keeps the creation label and is the fallback when
+ * no parent catalog row is loaded.
+ * @param address - parsed direct-parent subagent address.
+ * @param list - current Session list snapshot holding both projections.
+ * @returns the catalog label, else the descriptor label, else the raw child identity.
+ */
+export function subagentChatTitle(address: SubagentAddress, list: SessionListState): string {
+  return list.projectionsBySession[address.parentSessionId]?.values.subagentCatalog
+    ?.find(entry => entry.id === address.childSessionId)?.label
+    ?? list.byId[address.childSessionId]?.projectionValues?.subagent?.label
+    ?? address.childSessionId
 }
 
 function waitForAbort(signal: AbortSignal): Promise<void> {
@@ -182,10 +198,10 @@ export function registerSidebarChat(ctx: Context, t: TranslateNS<typeof NS>): vo
     priority: 'builtin',
     canOpen: address => parseSubagentChatAddress(address) !== undefined,
     title: (address) => {
-      const child = parseSubagentChatAddress(address)?.childSessionId
-      return child === undefined
+      const parsed = parseSubagentChatAddress(address)
+      return parsed === undefined
         ? t('sidebar.chat')
-        : ctx.sessions.list.getSnapshot().byId[child]?.projectionValues?.subagent?.label ?? child
+        : subagentChatTitle(parsed, ctx.sessions.list.getSnapshot())
     },
   } satisfies SidebarRightTabDefinition), 'ui-subagent: Sidebar chat type')
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({

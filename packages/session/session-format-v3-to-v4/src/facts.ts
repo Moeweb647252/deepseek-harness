@@ -3,6 +3,12 @@
 import { SessionFormatError, SessionFormatUnsupportedMigrationError, isSessionFormatJsonObject, sessionFormatCount } from '@deepseek-ai/dsh-session-format'
 import type { SessionFormatArtifact, SessionFormatJsonObject, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
 
+/** Catalog payload version that retires one listed child identity and carries no child evidence. */
+export const RETIRED_SUBAGENT_CATALOG_VERSION = 3
+
+/** Catalog payload version that replaces one listed child's display label. */
+export const RELABELED_SUBAGENT_CATALOG_VERSION = 4
+
 /**
  * Collect a child's own descriptor without requiring one before its parent catalog is read.
  * @param artifact - validated historical child artifact with its exact inherited cut.
@@ -65,13 +71,29 @@ export function childCatalogFact(source: SessionFormatJsonObject): SessionFormat
 
 /**
  * Validate the historical fields used for catalog membership without interpreting extensions.
+ * A retirement record names one identity and carries neither creation evidence nor a label;
+ * a relabel record names one identity and its replacement label.
  * @param value - catalog payload or prepared historical discovery fact.
  * @param subject - event type or child identity used in rejection diagnostics.
  * @returns validated catalog payload.
  */
 export function catalogFact(value: SessionFormatJsonValue, subject = 'subagent/catalog'): SessionFormatJsonObject {
-  if (!isSessionFormatJsonObject(value) || (value['version'] !== 0 && value['version'] !== 1 && value['version'] !== 2)
-    || typeof value['childId'] !== 'string'
+  if (!isSessionFormatJsonObject(value) || typeof value['childId'] !== 'string') {
+    throw new SessionFormatError(`${subject} requires a supported versioned catalog fact`)
+  }
+  if (value['version'] === RETIRED_SUBAGENT_CATALOG_VERSION) {
+    if (value['mode'] !== 'retired' || value['childCreatedAt'] !== undefined || value['label'] !== undefined) {
+      throw new SessionFormatError(`${subject} requires a supported versioned catalog fact`)
+    }
+    return value
+  }
+  if (value['version'] === RELABELED_SUBAGENT_CATALOG_VERSION) {
+    if (typeof value['label'] !== 'string' || value['childCreatedAt'] !== undefined || value['mode'] !== undefined) {
+      throw new SessionFormatError(`${subject} requires a supported versioned catalog fact`)
+    }
+    return value
+  }
+  if ((value['version'] !== 0 && value['version'] !== 1 && value['version'] !== 2)
     || (value['mode'] !== 'continuable' && value['mode'] !== 'one-shot' && value['mode'] !== 'external' && value['mode'] !== 'unknown')
     || ((value['version'] === 2) !== (value['mode'] === 'external'))
     || (value['version'] === 0 && value['mode'] === 'unknown')
