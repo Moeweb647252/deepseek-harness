@@ -1,12 +1,13 @@
 /** ui-subagent browser half: catalog actions and read-only composer routing. */
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { Context } from '@deepseek-ai/cordis'
-import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
+import { stubConfigForm, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type {
   SessionListState, SessionSnapshot, SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
+import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -55,6 +56,20 @@ function sessionsWith(sessions: SessionSummary[]) {
       actionCalls.push({ method: 'refreshProjections', args: [parentSessionId] })
       return Promise.resolve()
     },
+    retireResult: { ok: true, value: { retired: true } } as RemoteResult<{ retired: true }>,
+  }
+}
+
+/** Scripted `subagents.retire` face recording each call and its outcome. */
+function retireRemote(face: ReturnType<typeof sessionsWith>) {
+  return {
+    $on: () => () => {},
+    subagents: {
+      retire: (request: { parentSessionId: SessionId; childSessionId: SessionId }) => {
+        face.actionCalls.push({ method: 'retire', args: [request] })
+        return Promise.resolve(face.retireResult)
+      },
+    },
   }
 }
 
@@ -85,7 +100,9 @@ async function fullBench(sessions: SessionSummary[]) {
       face.actionCalls.push({ method: 'openResource', args: [address, options] })
     },
   } as never)
-  ctx.provide('remote', { $on: () => () => {} } as never)
+  const remote = retireRemote(face)
+  ctx.provide('remote', remote as never)
+  ctx.provide('remote.subagents', remote.subagents as never)
   ctx.provide('configForms', { developerTools: { enabled: createSnapshotStore(true) }, get: () => stubConfigForm().scope } as never)
   await provideSlotFaces(ctx)
   await ctx.plugin({ inject: localeInject, apply: applyLocale }).await()
@@ -103,9 +120,42 @@ const FAMILY: SessionSummary[] = [
   summary({ id: sid('c5'), parentId: sid('parent'), displayTitle: 'scout', running: true }),
 ]
 
+/** The lineage slot entry registered by this package. */
+function lineageEntry(ctx: Context) {
+  const catalogEntry = ctx.slots.entries('conversation.session.header.lineage')
+    .find(entry => entry.component === SubagentHeaderLineage)
+  if (catalogEntry === undefined) throw new Error('ui-subagent: lineage slot entry is missing')
+  return catalogEntry
+}
+
+/** Read the lineage slot's injected catalog actions for one parent Session. */
+function catalogActions(ctx: Context, parentSessionId: SessionId): SubagentCatalogInjected {
+  const catalogEntry = lineageEntry(ctx)
+  return (catalogEntry.inject as unknown as (id: SessionId) => SubagentCatalogInjected)(parentSessionId)
+}
+
 describe('apply', () => {
   it('declares the services it binds', () => {
-    expect(inject).toEqual(['sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight'])
+    expect(inject).toEqual([
+      'sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight', 'remote', 'remote.subagents',
+    ])
+  })
+
+  it('rethrows the retire result failure so the row can report it', async () => {
+    const { ctx, face } = await fullBench(FAMILY)
+    face.retireResult = {
+      ok: false,
+      error: new RemoteError(
+        'subagent/parent-unavailable', 'parent session is not live', { parentSessionId: sid('parent') },
+      ),
+    }
+    const actions = catalogActions(ctx, sid('parent'))
+
+    await expect(actions.retireChild(sid('parent'), sid('c1')))
+      .rejects.toThrow('parent session is not live')
+    expect(face.actionCalls).toEqual([
+      { method: 'retire', args: [{ parentSessionId: sid('parent'), childSessionId: sid('c1') }] },
+    ])
   })
 
   it('keeps the root catalog extension available when optional Sidebar services arrive', async () => {
@@ -123,9 +173,7 @@ describe('apply', () => {
 
   it('registers catalog actions and selects read-only subagent composers from session facts', async () => {
     const { ctx, face } = await fullBench(FAMILY)
-    const catalogEntry = ctx.slots.entries('conversation.session.header.lineage')
-      .find(entry => entry.component === SubagentHeaderLineage)!
-    const actions = (catalogEntry.inject as unknown as (id: SessionId) => SubagentCatalogInjected)(sid('parent'))
+    const actions = catalogActions(ctx, sid('parent'))
     const address: SubagentAddress = {
       parentSessionId: sid('parent'),
       childSessionId: sid('c1'),
@@ -134,6 +182,7 @@ describe('apply', () => {
     actions.openChild(address)
     actions.openChildAside(address)
     actions.refreshProjection(sid('parent'))
+    await actions.retireChild(sid('parent'), sid('c1'))
     expect(face.actionCalls).toEqual([
       { method: 'openSession', args: [address] },
       {
@@ -144,6 +193,7 @@ describe('apply', () => {
         ],
       },
       { method: 'refreshProjections', args: [sid('parent')] },
+      { method: 'retire', args: [{ parentSessionId: sid('parent'), childSessionId: sid('c1') }] },
     ])
 
     // The root-session catalog seat registers in the actions band with the

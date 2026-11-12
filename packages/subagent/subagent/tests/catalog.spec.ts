@@ -13,6 +13,8 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   catalogNames,
   establishExternalCatalogChild,
+  relabelCatalogChild,
+  retireCatalogChild,
   subagentCatalogProjectionDefinition,
 } from '../src/catalog.ts'
 import type { SubagentCatalogState } from '../src/catalog.ts'
@@ -124,6 +126,67 @@ describe('subagent catalog projection', () => {
     expect(subagentCatalogProjectionDefinition.wire.view(first)).toHaveLength(64)
     expect(subagentCatalogProjectionDefinition.wire.view(restored).map(entry => entry.id))
       .toEqual(Array.from({ length: 130 }, (_, i) => SessionId(`child-${i}`)))
+  })
+
+  it('retires one listed child while preserving the other rows and their order', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      const parent = ctx.sessions.create(header.id)
+      parent.append('subagent/catalog', fact(0, 'first', 1, { mode: 'one-shot' }).data)
+      parent.append('subagent/catalog', fact(1, 'second', 2, { mode: 'continuable', label: 'Second' }).data)
+      retireCatalogChild(parent, SessionId('first'))
+      // A retirement record carries only the identity it removes.
+      expect(parent.snapshotEvents().at(-1)?.data).toEqual({
+        version: 4,
+        childId: 'first',
+        mode: 'retired',
+      })
+      const retired = fold(parent.snapshotEvents())
+      expect(subagentCatalogProjectionDefinition.wire.view(retired)).toEqual([
+        { id: SessionId('second'), createdAt: 2, mode: 'continuable', label: 'Second' },
+      ])
+
+      // A later establishing fact for the same identity lists it again, after the survivors.
+      parent.append('subagent/catalog', fact(2, 'first', 3, { mode: 'continuable', label: 'Back' }).data)
+      expect(subagentCatalogProjectionDefinition.wire.view(fold(parent.snapshotEvents())).map(entry => entry.id))
+        .toEqual([SessionId('second'), SessionId('first')])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('relabels one listed child in place without changing its position or mode', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      const parent = ctx.sessions.create(header.id)
+      parent.append('subagent/catalog', fact(0, 'first', 1, { mode: 'one-shot', label: 'First' }).data)
+      parent.append('subagent/catalog', fact(1, 'second', 2, { mode: 'continuable', label: 'Second' }).data)
+      relabelCatalogChild(parent, SessionId('second'), 'renamed')
+      // A relabel record carries the identity and its replacement label only.
+      expect(parent.snapshotEvents().at(-1)?.data).toEqual({ version: 5, childId: 'second', label: 'renamed' })
+      expect(subagentCatalogProjectionDefinition.wire.view(fold(parent.snapshotEvents()))).toEqual([
+        { id: SessionId('first'), createdAt: 1, mode: 'one-shot', label: 'First' },
+        { id: SessionId('second'), createdAt: 2, mode: 'continuable', label: 'renamed' },
+      ])
+    } finally {
+      void ctx.fiber.dispose()
+    }
+  })
+
+  it('ignores a relabel for an identity the catalog does not list', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(SessionStore)
+      const parent = ctx.sessions.create(header.id)
+      parent.append('subagent/catalog', fact(0, 'first', 1, { mode: 'one-shot', label: 'First' }).data)
+      relabelCatalogChild(parent, SessionId('absent'), 'ghost')
+      expect(subagentCatalogProjectionDefinition.wire.view(fold(parent.snapshotEvents())))
+        .toEqual([{ id: SessionId('first'), createdAt: 1, mode: 'one-shot', label: 'First' }])
+    } finally {
+      void ctx.fiber.dispose()
+    }
   })
 
   it.each([0, 1] as const)('reads known catalog modes at payload version %s', (version) => {
@@ -242,7 +305,7 @@ describe('external catalog membership', () => {
 })
 
 describe('named catalog membership', () => {
-  it('reuses version-6 unnamed checkpoints and folds only the named suffix', async () => {
+  it('reuses version-6 unnamed checkpoints and folds named, retired, and relabeled suffixes', async () => {
     const ctx = new Context()
     try {
       await ctx.plugin(SessionProjectionRegistry)
@@ -261,6 +324,10 @@ describe('named catalog membership', () => {
             mode: 'continuable', label: 'Review', name: 'reviewer' } },
         { type: 'subagent/catalog', seq: SessionSeq(4), time: 0,
           data: { version: 3, childId: SessionId('auditor'), childCreatedAt: 5, mode: 'external', name: 'auditor' } },
+        { type: 'subagent/catalog', seq: SessionSeq(5), time: 0,
+          data: { version: 4, childId: SessionId('legacy-unknown'), mode: 'retired' } },
+        { type: 'subagent/catalog', seq: SessionSeq(6), time: 0,
+          data: { version: 5, childId: SessionId('legacy-local'), label: 'Legacy renamed' } },
       ]
       const checkpoint = { subagentCatalog: { ver: 6, seq: SessionSeq(2), val: {
         inheritedEventCount: 0, head: { values: historical.map(event => event.data) },
@@ -278,7 +345,7 @@ describe('named catalog membership', () => {
       expect(restored).toEqual(full)
       expect(restored.checkpoint['subagentCatalog']!.ver).toBe(6)
       expect(restored.snapshot.values.subagentCatalog?.map(entry => 'name' in entry ? entry.name : undefined))
-        .toEqual([undefined, undefined, undefined, 'reviewer', 'auditor'])
+        .toEqual([undefined, undefined, 'reviewer', 'auditor'])
     } finally {
       await ctx.fiber.dispose()
     }

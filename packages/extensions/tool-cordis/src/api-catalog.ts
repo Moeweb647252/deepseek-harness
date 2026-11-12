@@ -3757,6 +3757,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{RemoteError} `gateway/bad-request` for an empty id, otherwise `gateway/internal`.'],
       },
       {
+        signature: '@Remote(\'retire\') retire(request: SubagentRetireRequest): SubagentRetireReceipt',
+        description: 'Remote face of catalog retirement under one durable parent address: remove one direct child from its parent\'s `subagentCatalog` listing without deleting or interrupting the child Session.\n\nThe parent Session owns the catalog, so its Agent must be live to append the retirement record. The record names one identity and an unlisted identity changes no view, which keeps repeated and racing calls convergent.',
+        parameters: [{ name: 'request', description: 'durable parent and child identities.' }],
+        returns: 'acknowledgement that the retirement record was appended.',
+        throws: ['{RemoteError} `gateway/bad-request` for an empty id, `subagent/parent-unavailable` when no live Agent carries the parent, otherwise `gateway/internal`.'],
+      },
+      {
         signature: 'registerProvider(provider: SubagentProvider): () => void',
         description: 'Register a provider under its name. Registration is effect-scoped and HMR safe; removing a provider blocks new starts but does not revoke runs that were already returned to their holders. Providers without either execution method are rejected with UNSUPPORTED_CAPABILITY before registration.',
         parameters: [{ name: 'provider', description: 'the trusted provider implementation.' }],
@@ -9278,6 +9285,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubagentResult',
     declaration: 'export interface SubagentResult {\n    readonly output: readonly ContentBlock[];\n    readonly structured?: unknown;\n    readonly diagnostic?: string;\n    readonly stopReason: SubagentStopReason;\n}',
+  },
+  {
+    name: 'SubagentRetireReceipt',
+    declaration: 'export interface SubagentRetireReceipt {\n    readonly retired: true;\n}',
+  },
+  {
+    name: 'SubagentRetireRequest',
+    declaration: 'export interface SubagentRetireRequest {\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n}',
   },
   {
     name: 'SubagentRun',

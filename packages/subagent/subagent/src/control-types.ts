@@ -101,6 +101,22 @@ export interface SubagentInterruptReceipt {
 }
 
 /**
+ * One browser request to retire a direct child from its parent's catalog. The
+ * child Session log stays readable; only the parent's catalog listing changes.
+ */
+export interface SubagentRetireRequest {
+  /** Durable direct parent whose catalog lists the child. */
+  readonly parentSessionId: SessionId
+  /** Durable direct-child Session identity to retire. */
+  readonly childSessionId: SessionId
+}
+
+/** Acknowledgement that one catalog retirement record was appended. */
+export interface SubagentRetireReceipt {
+  readonly retired: true
+}
+
+/**
  * Failure details the control surface answers with. Prompts and interrupts
  * share these failures with the Client Remote result.
  */
@@ -123,5 +139,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'subagent/attachment-invalid': { readonly reason: string }
     /** The child exists but its inbox cannot admit the message now. */
     'subagent/delivery-unavailable': { readonly childSessionId: SessionId }
+    /** The catalog-owning parent Session has no live Agent to append the retirement record. */
+    'subagent/parent-unavailable': { readonly parentSessionId: SessionId }
   }
 }
