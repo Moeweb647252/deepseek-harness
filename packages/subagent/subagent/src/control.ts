@@ -1,6 +1,7 @@
 /**
- * Browser-facing subagent prompt and interrupt request validation plus the
- * stable prompt failure codes returned by the Remote surface.
+ * Browser-facing subagent prompt, interrupt, and catalog retirement request
+ * validation plus the stable prompt failure codes returned by the Remote
+ * surface.
  *
  * @module @deepseek-ai/dsh-subagent
  */
@@ -18,6 +19,10 @@ const CONTROL_ID_SCHEMAS = {
     delivery: z.enum(['queue', 'steer']),
   }),
   'subagent.interrupt': z.object({
+    childSessionId: SESSION_ID_SCHEMA,
+  }),
+  'subagent.retire': z.object({
+    parentSessionId: SESSION_ID_SCHEMA,
     childSessionId: SESSION_ID_SCHEMA,
   }),
 } as const
