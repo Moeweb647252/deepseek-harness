@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-20-catalog-row-removal.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-20-catalog-row-removal.md
+/agent-note-catalog-row-removal-in-the-session-header:
+  en: 8d816050269e4cb8
+  zh: dc320c62f2206968
+/agent-note-catalog-row-removal-in-the-session-header/problem:
+  en: e4de0618519d5a39
+  zh: c5f9b82408aa1ded
+/agent-note-catalog-row-removal-in-the-session-header/decision:
+  en: 491c73b9b9aeafe5
+  zh: dd172482d2c0ea61
+/agent-note-catalog-row-removal-in-the-session-header/alternatives-considered:
+  en: a5351d58f58ff5e8
+  zh: a4403b807fa965d8
+/agent-note-catalog-row-removal-in-the-session-header/consequences:
+  en: f46126786f4431f2
+  zh: b929212718035c69

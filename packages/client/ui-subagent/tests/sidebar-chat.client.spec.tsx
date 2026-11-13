@@ -10,11 +10,12 @@ import type { ResourceProvider } from '@deepseek-ai/dsh-client-resources/client'
 import { sessionSnapshot } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import {
   ConversationSlotPanel, FixedChatConversationView, parseSubagentChatAddress,
-  registerSidebarChat, subagentChatAddress, SUBAGENT_CHAT_ID, type SidebarChatTabProps,
+  registerSidebarChat, subagentChatAddress, subagentChatTitle, SUBAGENT_CHAT_ID, type SidebarChatTabProps,
 } from '../src/client/sidebar-chat/index.tsx'
 import { SidebarChatTab } from '../src/client/sidebar-chat/index.tsx'
 
@@ -40,6 +41,53 @@ describe('Sidebar chat address', () => {
       .toEqual({ ...ADDRESS, mode: 'one-shot' })
     expect(parseSubagentChatAddress(subagentChatAddress({ ...ADDRESS, mode: 'unknown' })))
       .toEqual({ ...ADDRESS, mode: 'unknown' })
+  })
+
+  it('titles a chat from the mutable parent catalog label, then the creation label', () => {
+    const catalog = (label: string): SessionListState['projectionsBySession'] => ({
+      [PARENT]: {
+        values: { subagentCatalog: [{ id: CHILD, createdAt: 1, mode: 'continuable', label }] },
+        state: 'ready',
+        error: null,
+      },
+    })
+    /** A list whose only loaded facts are the two label projections under test. */
+    const list = (
+      projectionsBySession: SessionListState['projectionsBySession'],
+      descriptorLabel?: string,
+    ): SessionListState => ({
+      ids: [],
+      byId: descriptorLabel === undefined ? {} : {
+        [CHILD]: {
+          id: CHILD,
+          displayTitle: 'Worker',
+          running: false,
+          retainedBy: { testOperation: 1 },
+          blank: false,
+          updatedAt: 1,
+          projectionValues: { subagent: { mode: 'continuable', label: descriptorLabel, seq: SessionSeq(1) } },
+        },
+      },
+      phase: 'ready',
+      projectionsBySession,
+    })
+
+    // The catalog label outranks the child's immutable creation label, so a
+    // relabel reaches the tab title.
+    expect(subagentChatTitle(ADDRESS, list(catalog('renamed-teammate'), 'creation-label'))).toBe('renamed-teammate')
+    expect(subagentChatTitle(ADDRESS, list(catalog('renamed-again'), 'creation-label'))).toBe('renamed-again')
+    // Without a loaded parent catalog row the creation label answers, and with
+    // neither the raw identity does.
+    expect(subagentChatTitle(ADDRESS, list({}, 'creation-label'))).toBe('creation-label')
+    expect(subagentChatTitle(ADDRESS, list({}))).toBe(CHILD)
+    // A catalog listing a different child does not title this one.
+    expect(subagentChatTitle(ADDRESS, list({
+      [PARENT]: {
+        values: { subagentCatalog: [{ id: 'other' as SessionId, createdAt: 1, mode: 'continuable', label: 'Other' }] },
+        state: 'ready',
+        error: null,
+      },
+    }, 'creation-label'))).toBe('creation-label')
   })
 
   it.each([

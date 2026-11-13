@@ -6,7 +6,7 @@ import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonObject
 import { assertV4DeveloperData } from './developer.ts'
 import { assertV4LifecycleRelationships } from './relationships.ts'
 import { assertV4MessageSources } from './message-sources.ts'
-import { catalogFact } from './facts.ts'
+import { catalogFact, RELABELED_SUBAGENT_CATALOG_VERSION, RETIRED_SUBAGENT_CATALOG_VERSION } from './facts.ts'
 import { assertV4RetiredSyntax } from './retired-syntax.ts'
 import { assertV4SystemMessageFields } from './system-message.ts'
 import { assertV4ForkResult } from './fork-result.ts'
@@ -108,8 +108,7 @@ export function validateDeliveryAccepted(event: SessionFormatEvent, currentVersi
  * @param knownEventTypes - installed event types whose payloads this reader interprets.
  */
 export function assertReleasedV4Relationships(artifact: SessionFormatArtifact, knownEventTypes: ReadonlySet<string>): void {
-  const ids = new Set<string>()
-  const names = new Set<string>()
+  const listed = new Map<string, string | undefined>()
   for (const event of artifact.events) {
     if (!knownEventTypes.has(event.type)) continue
     assertV4DeveloperData(event)
@@ -123,21 +122,35 @@ export function assertReleasedV4Relationships(artifact: SessionFormatArtifact, k
     if (event.type === 'subagent/catalog' && event.seq >= artifact.inheritedEventCount) {
       const fact = nativeCatalogFact(event.data)
       const id = fact['childId'] as string
-      if (ids.has(id)) throw new SessionFormatError(`duplicate catalog child ${id}`)
-      ids.add(id)
-      // Sibling names are unique by construction, so a log that repeats one makes name lookup ambiguous.
-      if (fact['name'] === undefined) continue
-      const name = fact['name'] as string
-      if (names.has(name)) throw new SessionFormatError(`duplicate catalog child name ${name}`)
-      names.add(name)
+      // A retirement removes the identity and its name from the current
+      // listing; listing an identity that is still listed remains corrupt,
+      // while re-listing a retired one is the supported re-establishment path.
+      // A relabel touches no membership, so it is neither a second listing nor
+      // a duplicate.
+      if (fact['version'] === RETIRED_SUBAGENT_CATALOG_VERSION) {
+        listed.delete(id)
+        continue
+      }
+      if (fact['version'] === RELABELED_SUBAGENT_CATALOG_VERSION) continue
+      if (listed.has(id)) throw new SessionFormatError(`duplicate catalog child ${id}`)
+      // Sibling names are unique among the current listing, so a log that
+      // repeats one makes name lookup ambiguous; a retired name may be reused.
+      const name = fact['name'] as string | undefined
+      if (name !== undefined) {
+        for (const listedName of listed.values()) {
+          if (listedName === name) throw new SessionFormatError(`duplicate catalog child name ${name}`)
+        }
+      }
+      listed.set(id, name)
     }
   }
   assertV4LifecycleRelationships(artifact, knownEventTypes)
 }
 
 /**
- * Validate an own native V4 catalog payload: a historical version or version 3,
- * which adds the child's name and is written only by native V4 creation.
+ * Validate an own native V4 catalog payload: a historical version, version 3,
+ * which adds the child's name and is written by native V4 creation, version 4,
+ * which retires one listed identity, or version 5, which relabels one.
  * @param value - native `subagent/catalog` payload.
  * @returns validated catalog payload.
  */
